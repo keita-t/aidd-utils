@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "/absolute/path/to/.claude/hooks/cache-keepalive.py",
+              "stop",
+              "--keepalive-min",
+              "50"
+            ],
+            "asyncRewake": true,
+            "timeout": 3900
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "/absolute/path/to/.claude/hooks/cache-keepalive.py",
+              "session-start"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "/absolute/path/to/.claude/hooks/cache-keepalive.py",
+              "session-end"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

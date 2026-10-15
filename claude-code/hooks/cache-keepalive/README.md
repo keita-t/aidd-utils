@@ -1,0 +1,72 @@
+# cache-keepalive
+
+Claude Code がバックグラウンド実行の Bash / Agent の完了を待っている間、プロンプトキャッシュの維持を試みる Python 製 hook です。Python 標準ライブラリだけで動作します。
+
+## 動作
+
+- `Stop`: 未完了タスクがあれば非同期タイマーを開始します。最後の応答から既定で 50 分経過すると、終了コード `2` と stderr のメッセージで Claude を起こします。メッセージはツールを呼ばず「待機中」とだけ返すようモデルに求めます。
+- `SessionStart`: 開始時刻を記録し、それ以前に起動したタスクを対象外にします。`compact` による開始では既存の開始時刻を維持します。
+- `SessionEnd`: タイマーの識別子と開始時刻を削除します。待機プロセスは次の確認時に終了します。
+
+完了通知、`TaskStop`、新しい `Stop` によるタイマーの置き換え、親プロセスの終了を検知すると、モデルを起こさず終了します。最後の応答から設定した TTL を超えている場合も起こしません。各 `Stop` が次のタイマーを開始するため、タスクの待機中は繰り返し動作します。
+
+## 必要な環境
+
+- Python 3.7 以降
+- `asyncRewake` と command hook の `args` に対応した Claude Code
+- 導入コマンドは Linux / macOS のシェルを想定
+
+`asyncRewake: true` の hook はバックグラウンドで動き、終了コード `2` で Claude を起こします。設定形式と非同期実行の仕様は [Claude Code の hooks リファレンス](https://code.claude.com/docs/en/hooks#command-hook-fields) を参照してください。
+
+## 導入
+
+1. このリポジトリを取得し、リポジトリのルートで次を実行します。
+
+   ```sh
+   mkdir -p "$HOME/.claude/hooks"
+   install -m 755 claude-code/hooks/cache-keepalive/cache-keepalive.py "$HOME/.claude/hooks/cache-keepalive.py"
+   ```
+
+2. [settings.example.json](settings.example.json) の `hooks` を `~/.claude/settings.json` にマージします。既存の設定と hook は残し、同じイベントがあれば既存の配列に要素を追加してください。
+
+3. 設定例の `/absolute/path/to/.claude/hooks/cache-keepalive.py` を、コピー先の絶対パスに 3 か所とも置き換えます。`args` を指定する形式ではシェルを介さないため、`~` は使わず絶対パスにしてください。
+
+4. Claude Code を再起動し、`/hooks` で `Stop`・`SessionStart`・`SessionEnd` への登録を確認します。
+
+設定例は `python3` 経由でスクリプトを実行します。Claude Code が起動する環境の `PATH` から `python3` を解決できるようにしてください。
+
+## 設定
+
+オプションはサブコマンドの後ろに指定します。通常は `Stop` の `args` だけを調整します。
+
+| オプション | 既定値 | 意味 |
+|---|---|---|
+| `--keepalive-min` | `50` | 最後の応答からモデルを起こすまでの分数 |
+| `--ttl-min` | `60` | この時間を超えていたら起こさない、想定キャッシュ TTL の分数 |
+| `--max-hours` | `12` | 対象に含めるタスクの起動時刻の上限経過時間。タイマー全体の稼働上限ではありません |
+| `--poll-sec` | `30` | 完了通知やタイマー中止を確認する間隔の秒数 |
+
+`0 < --keepalive-min < --ttl-min`、`--max-hours > 0`、`--poll-sec > 0` となる値を指定してください。スクリプト自体はこれらの大小関係を検証しません。`Stop` の `timeout` はモデルを起こすまでの待機時間より長く設定してください。設定例は 50 分待機に対して `3900` 秒です。待機中に応答が追加されるとタイマーの基準も延びますが、hook の `timeout` は延びません。
+
+既定値は 1 時間のキャッシュ TTL を想定しています。利用環境の TTL に合わせて調整してください。起動するたびにモデルの利用量が発生し、キャッシュの命中や延命は保証しません。
+
+## 状態とログ
+
+状態ファイルとセッション別ログの保存先は、次の優先順で決まります。
+
+1. `CLAUDE_CACHE_KEEPALIVE_STATE_DIR`
+2. `$XDG_RUNTIME_DIR/claude-cache-keepalive`
+3. OS の一時ディレクトリ内の `claude-cache-keepalive`
+
+セッション ID をファイル名に使い、`*.timer` にタイマーの識別子、`*.started` に開始時刻、`*.log` に起動・終了・wake の理由を記録します。ログは `SessionEnd` 後も残ります。
+
+## 制約
+
+- Claude Code のトランスクリプト（JSONL）の内部形式に依存します。形式が変わるとタスクの検出が機能しなくなる場合があります。
+- トランスクリプトに記録された `backgroundTaskId`、または `isAsync: true` と `agentId` を持つタスクが対象です。通常の同期実行は対象外です。
+- `CLAUDE_CODE_ENTRYPOINT=sdk-cli` の場合は即時終了します。`claude -p` での終了待ちを避けるための処理で、対話セッションでの利用を想定しています。
+- `--max-hours` は各 `Stop` の開始時点で対象タスクを絞ります。すでに動いているタイマー内では再計算しません。
+
+## 無効化
+
+`~/.claude/settings.json` から、このスクリプトを呼ぶ 3 つの hook を削除して Claude Code を再起動します。他の hook は残してください。不要になったスクリプトと状態ファイルは削除できます。
